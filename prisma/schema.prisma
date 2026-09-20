@@ -1,0 +1,85 @@
+// Cmail data model
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id                String   @id @default(cuid())
+  primaryEmail      String   @unique
+  name              String?
+  picture           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Continuously-updated summary of the user's writing style, regenerated
+  // from recent ReplyExamples every N sent replies. This is what lets the
+  // AI reply drafts keep matching the user's voice more closely over time.
+  styleProfile      String?
+  styleProfileCount Int      @default(0)
+
+  accounts       GoogleAccount[]
+  replyExamples  ReplyExample[]
+}
+
+model GoogleAccount {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  email        String   @unique
+  name         String?
+  picture      String?
+
+  // AES-256-GCM encrypted OAuth tokens (see src/lib/crypto.ts)
+  accessTokenEnc  String
+  refreshTokenEnc String
+  expiryDate      DateTime
+  scope           String
+
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  replyExamples ReplyExample[]
+
+  @@index([userId])
+}
+
+// A learned example of how the user actually replies. Created every time a
+// reply is sent through Cmail, pairing the incoming email with the AI draft
+// and the (possibly hand-edited) text that was actually sent. Future draft
+// generations retrieve the most similar examples as few-shot context.
+model ReplyExample {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountId       String
+  account         GoogleAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  threadId        String
+  incomingFrom    String
+  incomingSubject String
+  incomingBody    String
+  aiDraft         String
+  finalReply      String
+
+  // Normalized keyword set used for lightweight retrieval, see src/lib/similarity.ts
+  keywords        String
+
+  // How much the user changed the AI draft before sending (0 = sent as-is,
+  // 1 = completely rewritten). Used to weight retrieval and to decide when
+  // a style profile refresh is worth triggering.
+  editRatio       Float
+
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([accountId])
+}
